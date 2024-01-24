@@ -1,0 +1,27 @@
+# ECS 术语表 (Glossary)
+
+## Entity（实体）
+一个唯一标识符（通常是整数），代表游戏世界中的一个「东西」。实体本身没有数据和行为——它的身份完全由它挂载的组件决定。
+
+## Component（组件）
+一个纯数据结构（C++ struct），存储实体的某个属性。组件不包含任何方法/逻辑。分为：
+- **Tag Component（标签组件）**：空结构体，仅用于标记/分类实体（如 `struct Player {}`）
+- **Data Component（数据组件）**：包含实际数据的组件（如 `struct Position { int x, y; }`）
+
+## System（系统）
+一个函数，对拥有特定组件组合的实体执行操作。系统是纯逻辑，不存储自己的状态。
+
+## Registry（注册表）
+EnTT 的核心类 `entt::registry`。管理所有实体、组件存储和查询。是 ECS 世界的「数据库」。
+
+## View（视图）
+EnTT 的查询机制。`reg.view<A, B>()` 返回所有同时拥有组件 A 和 B 的实体的可迭代集合。
+
+## emplace
+EnTT API：`reg.emplace<T>(entity, args...)` 给实体挂载一个 T 类型的组件。如果组件已存在则替换。
+
+## get
+EnTT API：`reg.get<T>(entity)` 获取实体的 T 类型组件的引用。
+
+## Factory（工厂）
+创建实体并挂载初始组件集的函数。在 EnTT-Pacman 中位于 `src/core/factories.cpp`。

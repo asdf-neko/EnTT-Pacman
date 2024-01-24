@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第4课：游戏主循环</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>第4课：游戏主循环</h1>
+<p class="meta">EnTT-Pacman 课程 &middot; 第二部分：架构</p>
+
+<h2>两层架构：Application 和 Game 各管什么</h2>
+
+<p>EnTT-Pacman 把代码分成两个清晰的层次：</p>
+
+<table>
+  <tr><th>层</th><th>类</th><th>职责</th><th>依赖</th></tr>
+  <tr>
+    <td><strong>平台层</strong></td>
+    <td><code>Application</code></td>
+    <td>SDL 窗口、渲染器、帧率控制、键盘事件分发</td>
+    <td>SDL2</td>
+  </tr>
+  <tr>
+    <td><strong>逻辑层</strong></td>
+    <td><code>Game</code></td>
+    <td>ECS 世界管理、系统调用编排、游戏状态</td>
+    <td>EnTT</td>
+  </tr>
+</table>
+
+<div class="callout good">
+  <strong>设计原则：</strong>Game 不知道 SDL 的存在，Application 不知道 ECS 的存在。Game 只暴露三个方法——<code>init()</code>、<code>input()</code>、<code>logic()</code>、<code>render()</code>。如果将来想换成别的渲染库（如 raylib），只需要重写 Application，Game 不用动。
+</div>
+
+<h2>完整主循环：逐行解析</h2>
+
+<p>主循环在 <code>src/core/app.cpp</code> 的 <code>Application::run()</code> 中。下面逐段拆解：</p>
+
+<h3>阶段 0：初始化</h3>
+
+<pre><code>void Application::run() {
+  // 0a. 创建窗口和渲染器
+  SDL::Window window{...};
+  SDL::Renderer renderer{...};
+
+  // 0b. 加载精灵图纹理 + 创建绘图工具
+  SDL::Texture maze = SDL::loadTexture(renderer.get(), animera::getTextureInfo());
+  SDL::QuadWriter writer{renderer.get(), maze.get()};
+
+  // 0c. 初始化游戏世界
+  Game game;
+  game.init();       // ← 创建 Player + 4 个 Ghost 实体</code></pre>
+
+<h3>阶段 1-4：每帧循环</h3>
+
+<pre><code>  int frame = 0;
+  bool quit = false;
+  while (!quit) {
+    FrameCap sync{fps};   // ───────────────── 阶段1：帧率锁定（20 FPS）
+
+    // ───────────────── 阶段2：处理输入
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+      if (e.type == SDL_QUIT) quit = true;
+      else if (e.type == SDL_KEYDOWN) game.input(e.key.keysym.scancode);
+    }
+
+    // ───────────────── 阶段3：更新逻辑（每8帧一次！）
+    if (frame % tileSize == 0) {    // tileSize = 8
+      if (!game.logic()) quit = true;
+    }
+
+    // ───────────────── 阶段4：渲染（每帧都画）
+    SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, 255);
+    SDL_RenderClear(renderer.get());
+    game.render(writer, frame % tileSize);   // ← 传入插值参数 0~7
+    ++frame;
+    SDL_RenderPresent(renderer.get());
+  }
+}</code></pre>
+
+<h2>核心设计：逻辑帧 vs 渲染帧</h2>
+
+<p>这是整个项目最精妙的设计决策之一：</p>
+
+<table>
+  <tr><th></th><th>频率</th><th>粒度</th><th>作用</th></tr>
+  <tr><td><strong>逻辑 Tick</strong></td><td>每 8 帧一次（2.5 Hz）</td><td>整格移动</td><td>系统调用、碰撞检测、状态切换</td></tr>
+  <tr><td><strong>渲染帧</strong></td><td>每帧（20 FPS）</td><td>像素级平滑</td><td>精灵动画插值</td></tr>
+</table>
+
+<pre><code>frame:  0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15 16 ...
+logic:  ✓  -  -  -  -  -  -  -  ✓  -  -  -  -  -  -  -  ✓ ...
+render: ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓  ✓ ...</code></pre>
+
+<p>
+<strong>为什么这样设计？</strong>Pacman 的角色是按格子移动的——每次移动一整格。但如果直接跳过去，画面会很突兀。
+所以逻辑每 8 帧走一格，渲染在中间 7 帧里做像素级平滑过渡。<code>frame % tileSize</code>（0~7）告诉渲染系统「当前在你的两个格子之间，进度是几/8」。
+</p>
+
+<div class="callout note">
+  <strong>C++ 提示：</strong><code>frame % tileSize</code> 是取模运算。当 <code>frame</code> 为 0,1,2,...,7,8,... 时，结果是 0,1,2,...,7,0,...。循环往复。
+</div>
+
+<h2>系统调用顺序：为什么重要？</h2>
+
+<p>回到 <code>src/core/game.cpp</code>，这是整节课最需要理解的代码：</p>
+
+<pre><code>bool Game::logic() {
+  // 1️⃣ 先切换散射/追逐周期
+  if (scattering) {
+    if (ticks >= scatterTicks) { ghostChase(reg); ticks = 0; scattering = false; }
+  } else {
+    if (ticks >= chaseTicks)  { ghostScatter(reg); ticks = 0; scattering = true; }
+  }
+  ++ticks;
+
+  // 2️⃣ 移动所有实体
+  movement(reg);           // 按 ActualDir 移动一格
+  wallCollide(reg, maze);  // 检查 DesiredDir 是否撞墙，设置 ActualDir
+
+  // 3️⃣ 吃豆 + 触发恐惧
+  dots += eatDots(reg, maze);
+  if (eatEnergizer(reg, maze)) ghostScared(reg);
+  ghostScaredTimeout(reg);  // 恐惧倒计时，到期切回追逐
+
+  // 4️⃣ 幽灵进出房子
+  enterHouse(reg);          // 被吃的幽灵回到家
+  setBlinkyChaseTarget(reg); // 计算各种模式下的目标
+  setPinkyChaseTarget(reg);
+  setInkyChaseTarget(reg);
+  setClydeChaseTarget(reg);
+  setScaredTarget(reg, maze, rand);
+  setScatterTarget(reg);
+  setEatenTarget(reg);
+  leaveHouse(reg);          // 在家的幽灵离开
+
+  // 5️⃣ 幽灵选择方向（朝目标移动）
+  pursueTarget(reg, maze);
+
+  // 6️⃣ 碰撞检测
+  const GhostCollision collision = playerGhostCollide(reg);
+  if (collision.type == GhostCollision::Type::eat) ghostEaten(reg, collision.ghost);
+  if (collision.type == GhostCollision::Type::lose) state = State::lost;
+  else if (dots == dotsInMaze) state = State::won;
+
+  return true;
+}</code></pre>
+
+<div class="callout warn">
+  <strong>原作者在注释中强调：</strong>ECS 中系统顺序极其重要。每个系统读一些状态、改一些状态。如果顺序不对，会产生微妙 bug。确保系统顺序<strong>清晰可见</strong>——不要用抽象隐藏它。
+</div>
+
+<p>来看看如果顺序错了会怎样：</p>
+
+<ol>
+  <li>如果先调 <code>pursueTarget</code> 再调 <code>setBlinkyChaseTarget</code> → 幽灵用的是上一帧的目标，慢一拍</li>
+  <li>如果先调 <code>playerGhostCollide</code> 再调 <code>movement</code> → 检测的是移动前的位置，碰撞判断错误</li>
+  <li>如果先调 <code>enterHouse</code> 再调 <code>setEatenTarget</code> → 被吃的幽灵还没进门就被设了进门目标，逻辑混乱</li>
+</ol>
+
+<h2>整体数据流</h2>
+
+<p>一帧的完整数据流动路径：</p>
+
+<pre><code>键盘输入 → DesiredDir 改变
+         ↓
+wallCollide → DesiredDir 合法？→ 更新 ActualDir
+         ↓
+movement → Position 按 ActualDir 移动
+         ↓
+eatDots → 豆子被吃掉？→ 触发 ghostScared
+         ↓
+setXxxTarget → 每个幽灵按模式计算 Target
+         ↓
+pursueTarget → 幽灵比较 Target 和当前位置 → 更新 DesiredDir
+         ↓
+playerGhostCollide → 玩家和幽灵在同一格？→ 吃或被吃</code></pre>
+
+<h2>Game 的状态机</h2>
+
+<p><code>Game</code> 内部有一个简单的三状态机：</p>
+
+<pre><code>enum class State { playing, won, lost };
+
+// logic() 只在 playing 状态下执行
+if (state != State::playing) return true;
+
+// render() 根据状态画不同画面
+if (state == State::playing) { ... 正常画面 ... }
+else if (state == State::won) { ... 胜利画面 ... }
+else if (state == State::lost) { ... 失败画面 ... }</code></pre>
+
+<h2>什么在 ECS 里，什么在外面？</h2>
+
+<table>
+  <tr><th>在 Registry 里（ECS）</th><th>在 Game 里（外部状态）</th></tr>
+  <tr><td>所有组件（Position、Direction、Target...）</td><td>maze（迷宫地图）</td></tr>
+  <tr><td>实体本身（Player、Blinky、Pinky...）</td><td>dots（已吃豆子数）</td></tr>
+  <tr><td>幽灵模式标签（ChaseMode/ScaredMode...）</td><td>state（playing/won/lost）</td></tr>
+  <tr><td></td><td>ticks（追逐/散射周期计时）</td></tr>
+  <tr><td></td><td>scattering（当前是散射期？）</td></tr>
+  <tr><td></td><td>rand（随机数生成器）</td></tr>
+</table>
+
+<div class="callout note">
+  <strong>原作者的解释：</strong>把 <code>dots</code> 放在 Game 里是因为只有一个玩家。如果有多个玩家，每个玩家需要自己的吃豆数，那就应该把 <code>dots</code> 放进一个组件里。
+</div>
+
+<h2>小测验</h2>
+
+<ol>
+  <li>为什么逻辑 tick 是每 8 帧一次而不是每帧一次？</li>
+  <li>如果把 <code>pursueTarget</code> 放在 <code>movement</code> 前面，会发生什么？</li>
+  <li>哪些状态应该放在 ECS 的组件里，哪些应该放在 Game 类的外部变量里？</li>
+</ol>
+
+<div class="footer">
+  <p><strong>上一课：</strong><a href="0003-entt-view.html">第3课：EnTT View</a></p>
+  <p><strong>下一步：</strong><a href="0005-component-design.html">第5课：组件设计</a></p>
+  <p>有疑问随时问我。</p>
+</div>
+
+<details style="margin-top: 2rem; opacity: 0.7;">
+  <summary style="cursor: pointer; font-weight: 600;">测验答案</summary>
+  <ol style="margin-top: 0.5rem;">
+    <li>因为 Pacman 是按<strong>整格</strong>移动的。逻辑每 8 帧走一格（位置从一个整数变成下一个整数），渲染在中间 7 帧做像素级插值平滑过渡。如果逻辑每帧都跑，角色会以 20 格/秒的速度飞过——太快了。</li>
+    <li><code>pursueTarget</code> 先执行 → 幽灵根据<strong>上一次</strong>移动后的位置计算方向 → <code>movement</code> 移动实体 → 方向信息滞后一帧。虽然不会崩溃，但幽灵行为会「慢半拍」。</li>
+    <li><strong>放组件里：</strong>附着在单个实体上的属性（位置、方向、模式、精灵）。<strong>放 Game 里：</strong>全局状态（迷宫地图、总豆子数、游戏胜败、随机数生成器）。判断标准：如果将来可能有多个实体需要各自的这个状态，就放组件里。</li>
+  </ol>
+</details>
+
+</body>
+</html>

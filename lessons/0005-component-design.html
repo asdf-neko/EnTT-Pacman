@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第5课：组件设计</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>第5课：组件设计</h1>
+<p class="meta">EnTT-Pacman 课程 &middot; 第二部分：架构</p>
+
+<h2>项目中有哪些组件？</h2>
+
+<p><code>src/comp/</code> 目录下共 12 个组件。把它们分成三组来看：</p>
+
+<table>
+  <tr><th>类别</th><th>组件</th><th>定义</th><th>作用</th></tr>
+  <tr>
+    <td rowspan="2"><strong>身份标签</strong></td>
+    <td><code>Player</code></td>
+    <td><code>struct Player {};</code></td>
+    <td>「我是玩家」</td>
+  </tr>
+  <tr>
+    <td><code>Ghost</code></td>
+    <td><code>struct Ghost {};</code></td>
+    <td>「我是幽灵」</td>
+  </tr>
+  <tr style="background: var(--code-bg);">
+    <td rowspan="5"><strong>模式标签</strong></td>
+    <td><code>ChaseMode</code></td>
+    <td><code>struct ChaseMode {};</code></td>
+    <td>「追逐中」</td>
+  </tr>
+  <tr style="background: var(--code-bg);">
+    <td><code>ScatterMode</code></td>
+    <td><code>struct ScatterMode {};</code></td>
+    <td>「散射中」</td>
+  </tr>
+  <tr style="background: var(--code-bg);">
+    <td><code>ScaredMode</code></td>
+    <td><code>struct ScaredMode { int timer; };</code></td>
+    <td>「恐惧中」+ 倒计时</td>
+  </tr>
+  <tr style="background: var(--code-bg);">
+    <td><code>EatenMode</code></td>
+    <td><code>struct EatenMode {};</code></td>
+    <td>「被吃了，回家中」</td>
+  </tr>
+  <tr style="background: var(--code-bg);">
+    <td><code>EnterHouse</code>/<code>LeaveHouse</code></td>
+    <td><code>struct EnterHouse {};</code></td>
+    <td>「鬼屋门票」</td>
+  </tr>
+  <tr>
+    <td rowspan="7"><strong>数据组件</strong></td>
+    <td><code>Position</code></td>
+    <td><code>struct Position { Pos p; };</code></td>
+    <td>当前格子位置</td>
+  </tr>
+  <tr>
+    <td><code>DesiredDir</code></td>
+    <td><code>struct DesiredDir { Dir d; };</code></td>
+    <td>想去的方向</td>
+  </tr>
+  <tr>
+    <td><code>ActualDir</code></td>
+    <td><code>struct ActualDir { Dir d; };</code></td>
+    <td>实际移动方向</td>
+  </tr>
+  <tr>
+    <td><code>Target</code></td>
+    <td><code>struct Target { Pos p; };</code></td>
+    <td>幽灵追踪的目标位置</td>
+  </tr>
+  <tr>
+    <td><code>HomePosition</code></td>
+    <td><code>struct HomePosition { Pos home, scatter; };</code></td>
+    <td>老巢位置 + 散射角落</td>
+  </tr>
+  <tr>
+    <td>ChaseTarget 族</td>
+    <td>4 种 <code>XxxChaseTarget</code></td>
+    <td>追逐目标的实体引用</td>
+  </tr>
+  <tr>
+    <td><code>PlayerSprite</code>/<code>GhostSprite</code></td>
+    <td><code>struct XxxSprite { SpriteID id; };</code></td>
+    <td>精灵图ID</td>
+  </tr>
+</table>
+
+<h2>设计模式一：Tag Component — 用空结构体标记状态</h2>
+
+<p>7 个组件是<strong>空的</strong>。它们不存数据，只做一件事：让 view 能筛选。</p>
+
+<pre><code>// 身份标签
+struct Player {};     // 只需 view&lt;Player&gt;() 就能找到玩家
+struct Ghost {};      // 只需 view&lt;Ghost&gt;() 就能找到所有幽灵
+
+// 模式标签 — 幽灵同时只能处于一种模式
+struct ChaseMode {};
+struct ScatterMode {};
+struct EatenMode {};
+
+// "门票"标签 — 控制鬼屋进出权限
+struct EnterHouse {};
+struct LeaveHouse {};</code></pre>
+
+<p><strong>这些空组件有什么共同点？</strong>它们回答的都是<strong>「是什么」</strong>或<strong>「处于什么状态」</strong>——这正是 ECS 替代 OOP 继承的方式。不再用 <code>class Ghost : public ChaseBehaviour</code>，而是给实体挂 <code>ChaseMode</code> 标签。</p>
+
+<div class="callout note">
+  <strong>为什么是多个 struct 而不是一个 enum？</strong><br>
+  如果用 <code>enum GhostMode { Chase, Scatter, Scared, Eaten }</code>，view 查询会变成：<br>
+  <code>view&lt;GhostMode&gt;()</code> → 拿到所有幽灵，然后手动 <code>if (mode == Chase)</code>。<br>
+  用独立 struct，EnTT 在查询阶段就完成了筛选：<br>
+  <code>view&lt;ChaseMode&gt;()</code> → 直接拿到追逐中的幽灵，零条件判断。
+</div>
+
+<h2>设计模式二：Data Component — 数据在最外层</h2>
+
+<p>数据组件都遵循一个原则：<strong>要用的数据直接放在 struct 顶层，不要嵌套</strong>。</p>
+
+<pre><code>// ✅ 好设计 — 数据在外层
+struct Position { Pos p; };
+struct DesiredDir { Dir d; };
+struct Target { Pos p; };
+
+// ❌ 避免 — 不需要多余的封装层
+struct Position {
+  Pos getPos() const { return p; }   // ECS 组件不需要方法！
+  void setPos(Pos newP) { p = newP; }
+private:
+  Pos p;   // 不需要 private！
+};</code></pre>
+
+<div class="callout good">
+  <strong>ECS 组件的第一原则：组件是纯数据，没有方法，没有 private。</strong>系统直接读组件字段——最快的路径。封装和 getter/setter 在这里是多余的噪音。
+</div>
+
+<h2>设计模式三：实体引用 — 用 entity 作为组件字段</h2>
+
+<p>这是 EnTT-Pacman 中最优雅的设计之一。每种幽灵的追逐目标组件存的是<strong>实体 ID</strong>，而不是位置：</p>
+
+<pre><code>// Blinky 追逐玩家 — 存玩家的实体 ID
+struct BlinkyChaseTarget {
+  entt::entity player;     // ← 存的是 entity，不是 Position！
+};
+
+// Inky 需要两个信息：玩家位置 + Blinky 位置
+struct InkyChaseTarget {
+  entt::entity player;     // 玩家
+  entt::entity blinky;     // Blinky
+};</code></pre>
+
+<p>使用时通过实体 ID 取对方的位置：</p>
+
+<pre><code>// src/sys/set_target.cpp — Blinky 的追逐目标就是玩家的位置
+auto view = reg.view&lt;Target, ChaseMode, BlinkyChaseTarget&gt;();
+for (auto e : view) {
+  const entt::entity player = view.get&lt;BlinkyChaseTarget&gt;(e).player;
+  view.get&lt;Target&gt;(e).p = reg.get&lt;Position&gt;(player).p;   // 解引用！
+}</code></pre>
+
+<div class="callout good">
+  <strong>原作者在注释中说：</strong>「这就是 ECS 的美妙之处。Blinky 不一定非要追玩家——<code>BlinkyChaseTarget</code> 只存一个有 Position 的实体 ID。Blinky 可以追 <strong>任何</strong> 有位置的东西。我们甚至可以让他追 Inky！」
+</div>
+
+<h2>设计模式四：「门票」模式 — EnterHouse / LeaveHouse</h2>
+
+<p>幽灵进出鬼屋是一个有趣的设计问题：鬼屋有门，门一次只能过一个方向的幽灵。作者的解决方案是<strong>门票组件</strong>：</p>
+
+<pre><code>// 幽灵有了 EnterHouse 门票 → 可以通过门进入屋子
+struct EnterHouse {};
+
+// 幽灵有了 LeaveHouse 门票 → 可以通过门离开屋子
+struct LeaveHouse {};</code></pre>
+
+<p>门票何时发放？</p>
+
+<pre><code>// 创建时：幽灵出生在房子里，默认带 LeaveHouse 门票
+makeGhost(reg, home, scatter) {
+  reg.emplace&lt;LeaveHouse&gt;(e);    // ← 出生就有出去的门票
+}
+
+// 被吃时：幽灵获得 EnterHouse 门票
+void ghostEaten(entt::registry &reg, entt::entity ghost) {
+  reg.emplace&lt;EnterHouse&gt;(ghost);   // ← 被吃后获得回家的门票
+}
+
+// 进门后：门票被收回
+// （enterHouse 和 leaveHouse 系统在实体通过门后 remove 相应的门票）</code></pre>
+
+<h2>设计模式五：ScaredMode — 标签和数据的混合体</h2>
+
+<p><code>ScaredMode</code> 是唯一一个<strong>既有标签作用又有数据</strong>的组件：</p>
+
+<pre><code>struct ScaredMode {
+  int timer = ghostScaredTime;   // 恐惧倒计时（40 ticks）
+};</code></pre>
+
+<p>为什么不让它和空标签统一？因为<strong>恐惧模式需要一个计时器</strong>。如果拆成两个组件：</p>
+
+<pre><code>// ❌ 不好的设计
+struct ScaredMode {};
+struct ScaredTimer { int timer; };
+
+// 系统需要同时查两个组件
+reg.view&lt;ScaredMode, ScaredTimer&gt;();  // 啰嗦</code></pre>
+
+<p>数据紧跟着状态走，合并成一个组件更简洁。</p>
+
+<h2>每个实体挂哪些组件？</h2>
+
+<p>这是一张完整映射表。每列是一个实体类型，每行是一种组件。✓ 表示挂了这个组件：</p>
+
+<table style="font-size: 0.85rem;">
+  <tr>
+    <th>组件</th>
+    <th>Player</th>
+    <th>Blinky</th>
+    <th>Pinky</th>
+    <th>Inky</th>
+    <th>Clyde</th>
+  </tr>
+  <tr><td>Player</td>           <td>✓</td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>Ghost</td>            <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Position</td>         <td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>DesiredDir</td>       <td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>ActualDir</td>        <td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>Target</td>           <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>HomePosition</td>     <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>LeaveHouse*</td>      <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>ScatterMode*</td>       <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td>BlinkyChaseTarget</td>  <td></td><td>✓</td><td></td><td></td><td></td></tr>
+  <tr><td>PinkyChaseTarget</td>   <td></td><td></td><td>✓</td><td></td><td></td></tr>
+  <tr><td>InkyChaseTarget</td>    <td></td><td></td><td></td><td>✓</td><td></td></tr>
+  <tr><td>ClydeChaseTarget</td>   <td></td><td></td><td></td><td></td><td>✓</td></tr>
+  <tr><td>PlayerSprite</td>     <td>✓</td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>GhostSprite</td>      <td></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+</table>
+
+<p><em>* 模式标签和门票在运行时动态变化（add/remove），其他组件是创建时就挂上且从不移除。</em></p>
+
+<div class="callout note">
+  <strong>从表中能看出什么？</strong>
+  <ul>
+    <li>所有实体共享 Position + DesiredDir + ActualDir —— 因为都需要移动</li>
+    <li>幽灵比玩家多 Target + HomePosition —— 因为它们需要 AI 导航</li>
+    <li>玩家独有 PlayerSprite，幽灵独有 GhostSprite —— 渲染系统用不同的逻辑</li>
+    <li>每种幽灵有<strong>自己专属的</strong> ChaseTarget 类型 —— 因为每种幽灵的追逐算法不同</li>
+  </ul>
+</div>
+
+<h2>为什么每种幽灵有独立的 ChaseTarget 组件？</h2>
+
+<p>这是作者做的一个明确的设计选择。来看看替代方案：</p>
+
+<pre><code>// 替代方案 A：统一组件 + 枚举
+struct ChaseTarget {
+  GhostType type;        // Blinky / Pinky / Inky / Clyde
+  entt::entity player;
+  entt::entity blinky;   // 只有 Inky 用，其他幽灵浪费内存
+};
+
+// 替代方案 B（本项目）：每种幽灵独立组件
+struct BlinkyChaseTarget { entt::entity player; };
+struct PinkyChaseTarget  { entt::entity player; };
+struct InkyChaseTarget   { entt::entity player, blinky; };
+struct ClydeChaseTarget  { entt::entity player; };</code></pre>
+
+<p><strong>方案 B 的优势：</strong>每个幽灵只存它<strong>真正需要</strong>的数据。Inky 需要额外存 blinky 的引用，其他幽灵不需要。而且系统可以直接用 <code>view&lt;ChaseMode, BlinkyChaseTarget&gt;()</code> 精确筛选——不需要额外的 if/switch。</p>
+
+<div class="callout warn">
+  <strong>取舍：</strong>方案 B 的代价是每个幽灵需要各自独立的 setTarget 系统（<code>setBlinkyChaseTarget</code>、<code>setPinkyChaseTarget</code>...），代码重复度更高。如果幽灵种类很多，方案 A 可能更合适。选择取决于具体场景。
+</div>
+
+<h2>设计清单：写组件前问自己</h2>
+
+<ol>
+  <li><strong>这个数据属于单个实体，还是全局共享？</strong> → 前者用组件，后者放 Game 类</li>
+  <li><strong>只是标记状态，还是要存数据？</strong> → 前者用空 struct，后者加字段</li>
+  <li><strong>需要和其他组件一起查询吗？</strong> → 想想你需要的 view 签名长什么样</li>
+  <li><strong>每个实体都会用这个数据吗？</strong> → 如果是，合并进已有组件；如果只少数用，新建组件</li>
+</ol>
+
+<h2>小测验</h2>
+
+<ol>
+  <li>为什么幽灵的四种模式用四个独立 struct，而不是一个 enum？</li>
+  <li><code>InkyChaseTarget</code> 为什么需要存两个 entity，而其他三种幽灵只存一个？</li>
+  <li>如果要在项目中添加「超级豆子吃了能让玩家短暂加速」，应该在哪些组件上改动？</li>
+</ol>
+
+<div class="footer">
+  <p><strong>上一课：</strong><a href="0004-game-loop.html">第4课：游戏主循环</a></p>
+  <p><strong>下一步：</strong><a href="0006-factories.html">第6课：实体工厂</a></p>
+  <p>有疑问随时问我。</p>
+  <p><a href="../reference/glossary.html">术语速查表 →</a></p>
+</div>
+
+<details style="margin-top: 2rem; opacity: 0.7;">
+  <summary style="cursor: pointer; font-weight: 600;">测验答案</summary>
+  <ol style="margin-top: 0.5rem;">
+    <li>因为 EnTT 的 view 可以直接按类型筛选。用 enum 的话 <code>view&lt;GhostMode&gt;()</code> 拿到所有幽灵，还要手动 if/switch。用独立 struct，<code>view&lt;ChaseMode&gt;()</code> 在查询阶段就完成了筛选。</li>
+    <li>因为 Inky 的追逐算法需要同时知道<strong>玩家位置</strong>和<strong>Blinky 位置</strong>（Inky 的目标 = Blinky 的位置 + (玩家前方两格 - Blinky 位置) × 2）。其他三种幽灵只需要玩家位置。</li>
+    <li>需要新增一个 <code>Speed</code> 组件（存储速度倍率），在 <code>movement</code> 系统中读取它，在吃能量豆时给 Player 挂上（带计时器），超时后自动移除。或者在已有的组件中增加字段——但这会让组件职责变模糊，独立组件更好。</li>
+  </ol>
+</details>
+
+</body>
+</html>

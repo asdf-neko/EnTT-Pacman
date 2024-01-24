@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第2课：EnTT 核心 API</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>第2课：EnTT 核心 API</h1>
+<p class="meta">EnTT-Pacman 课程 &middot; 第一部分：地基</p>
+
+<h2>Registry — 整个 ECS 世界的「数据库」</h2>
+
+<p>
+在第1课中我们知道了 Entity、Component、System 是什么。现在来看看它们如何在代码中运转。
+一切从一个对象开始：
+</p>
+
+<pre><code>#include &lt;entt/entity/registry.hpp&gt;
+
+entt::registry reg;   // 整个 ECS 世界就装在这个对象里</code></pre>
+
+<p>
+<strong>类比：</strong> <code>reg</code> 就像一个 <strong>Excel 表格</strong>。每一行是一个 Entity（行号），每一列是一种 Component。某个格子里有值，就说明那个实体拥有那个组件。
+</p>
+
+<p>在 EnTT-Pacman 中，<code>reg</code> 是 <code>Game</code> 类的成员变量：</p>
+
+<pre><code>// src/core/game.hpp
+class Game {
+private:
+  entt::registry reg;   // ← ECS 世界的拥有者
+  MazeState maze;
+  int dots = 0;
+  // ...
+};</code></pre>
+
+<div class="callout note">
+  <strong>关键约定：</strong>几乎所有的 EnTT 函数都接受 <code>entt::registry &</code> 作为第一个参数。系统函数通过这个引用访问整个 ECS 世界。
+</div>
+
+<h2>API 1：create — 创建实体</h2>
+
+<p>创建一个实体就是让 registry 分配一个新的行号：</p>
+
+<pre><code>const entt::entity e = reg.create();    // e 可能等于 0, 1, 2, ...
+// 此时 e 是一个「空实体」，没有任何组件</code></pre>
+
+<table>
+  <tr><th>API</th><th>作用</th><th>返回值</th></tr>
+  <tr><td><code>reg.create()</code></td><td>创建一个空实体</td><td><code>entt::entity</code>（本质是 <code>uint32_t</code> 或 <code>uint64_t</code>）</td></tr>
+</table>
+
+<div class="callout note">
+  <strong>C++ 提示：</strong><code>entt::entity</code> 只是一个整数的类型别名。你可以在调试器中把它打印出来——它就是一个数字。如果 EnTT 配置为 32 位模式，一个 registry 最多可以有约 40 亿个实体。
+</div>
+
+<h2>API 2：emplace — 给实体挂组件</h2>
+
+<p>创建实体后，它还是空的。用 <code>emplace</code> 给它挂上组件：</p>
+
+<pre><code>// 给实体 e 挂上一个 Position 组件，初始值为 {5, 3}
+reg.emplace&lt;Position&gt;(e, 5, 3);
+
+// 如果 Position 定义是 struct Position { int x, y; };
+// 那么 emplace&lt;Position&gt;(e, 5, 3) 会用 Position{5, 3} 来构造
+
+// 给实体 e 挂上一个空的 Player 标签
+reg.emplace&lt;Player&gt;(e);    // Player 是空结构体，不需要参数</code></pre>
+
+<p>看看项目中的真实用法——<code>src/core/factories.cpp</code>：</p>
+
+<pre><code>entt::entity makePlayer(entt::registry &reg) {
+  const entt::entity e = reg.create();          // 1. 创建空实体
+
+  reg.emplace&lt;Player&gt;(e);                        // 2. Player 标签
+  reg.emplace&lt;DesiredDir&gt;(e, playerSpawnDir);     // 3. 期望方向（Dir 枚举值）
+  reg.emplace&lt;ActualDir&gt;(e, playerSpawnDir);       // 4. 实际方向
+  reg.emplace&lt;Position&gt;(e, playerSpawnPos);        // 5. 出生位置（Pos 结构体）
+  reg.emplace&lt;PlayerSprite&gt;(e, animera::SpriteID::pacman_beg_); // 6. 精灵 ID
+
+  return e;   // 返回实体 ID 供后续使用
+}</code></pre>
+
+<div class="callout warn">
+  <strong>重要：</strong><code>emplace</code> 如果发现实体 <strong>已经有</strong> 同类型组件，会<strong>覆盖</strong>它。这不是错误，也不会警告——旧数据直接替换。这也意味着你可以用它来修改组件值。
+</div>
+
+<h2>API 3：get — 读取实体的组件</h2>
+
+<p>已经挂上的组件，通过 <code>get</code> 读出来：</p>
+
+<pre><code>// 获取实体 e 的 Position 组件引用
+Position &pos = reg.get&lt;Position&gt;(e);
+pos.x = 10;    // 直接修改，EnTT 内部会感知到这个变化
+
+// 也可以读标签组件（虽然没什么可读的）
+const Player &player = reg.get&lt;Player&gt;(e);</code></pre>
+
+<p><strong>在项目中随处可见：</strong></p>
+
+<pre><code>// src/sys/set_target.cpp — Blinky 的追逐目标 = 玩家的位置
+void setBlinkyChaseTarget(entt::registry &reg) {
+  auto view = reg.view&lt;Target, ChaseMode, BlinkyChaseTarget&gt;();
+  for (const entt::entity e : view) {
+    const entt::entity player = view.get&lt;BlinkyChaseTarget&gt;(e).player;
+    view.get&lt;Target&gt;(e).p = reg.get&lt;Position&gt;(player).p;   // ← get!
+  }
+}</code></pre>
+
+<div class="callout note">
+  <strong>C++ 提示：</strong><code>reg.get&lt;T&gt;(e)</code> 返回的是 <strong>引用</strong>（<code>T&amp;</code>）。你直接修改它，EnTT 内部存储就会被修改。这是 EnTT 的零开销设计——没有拷贝，没有事件通知，直接操作内存。
+</div>
+
+<h2>API 4：try_get — 安全地读取组件</h2>
+
+<p><code>get</code> 有一个危险：如果实体没有这个组件，行为是<strong>未定义的</strong>（Release 模式下可能崩溃或读到垃圾数据）。当你<strong>不确定</strong>实体是否有某个组件时，用 <code>try_get</code>：</p>
+
+<pre><code>// try_get 返回指针：有组件 → 返回指针，没有 → 返回 nullptr
+if (const Position *pos = reg.try_get&lt;Position&gt;(e)) {
+  // 实体有 Position 组件
+  std::cout &lt;&lt; pos-&gt;x &lt;&lt; '\n';
+} else {
+  // 实体没有 Position 组件
+}</code></pre>
+
+<table>
+  <tr><th>API</th><th>行为</th><th>何时使用</th></tr>
+  <tr><td><code>reg.get&lt;T&gt;(e)</code></td><td>返回引用，没有则<strong>未定义行为</strong></td><td>你<strong>确定</strong>实体有这个组件时（如在 view 迭代中）</td></tr>
+  <tr><td><code>reg.try_get&lt;T&gt;(e)</code></td><td>返回指针，没有则 <code>nullptr</code></td><td>你<strong>不确定</strong>实体是否有这个组件时</td></tr>
+</table>
+
+<h2>API 5：remove — 移除实体的组件</h2>
+
+<p>运行时改变实体「身份」的核心手段：</p>
+
+<pre><code>reg.remove&lt;ChaseMode&gt;(e);       // 移除追逐模式标签
+reg.emplace&lt;ScaredMode&gt;(e);     // 换成恐惧模式标签
+// 现在这个幽灵从"追逐状态"变成了"恐惧状态"</code></pre>
+
+<p>在 EnTT-Pacman 中，幽灵模式切换就是通过 <strong>remove + emplace</strong> 实现的：</p>
+
+<pre><code>// src/sys/change_ghost_mode.cpp（简化）
+void ghostChase(entt::registry &reg) {
+  auto view = reg.view&lt;ScatterMode&gt;();
+  for (const entt::entity e : view) {
+    reg.remove&lt;ScatterMode&gt;(e);     // 移除 ScatterMode
+    reg.emplace&lt;ChaseMode&gt;(e);      // 挂上 ChaseMode
+  }
+}</code></pre>
+
+<div class="callout good">
+  <strong>这就是 ECS 的「运行时改身份」！</strong>
+  不需要修改类、不需要改继承树、不需要 new/delete。幽灵切换模式 = 换一个标签组件。
+</div>
+
+<h2>API 6：destroy — 销毁实体</h2>
+
+<p>销毁实体会同时移除它挂载的<strong>所有</strong>组件：</p>
+
+<pre><code>reg.destroy(e);
+// 实体 e 不再存在，其所有组件内存被回收</code></pre>
+
+<p>在 Pacman 中很少用到这个——玩家和幽灵不会被销毁。但在其他游戏中（子弹、敌人死亡），这个 API 很重要。</p>
+
+<h2>API 7：all_of / any_of — 检查组件是否存在</h2>
+
+<pre><code>// 检查实体 e 是否同时拥有 Position 和 Player 组件
+if (reg.all_of&lt;Position, Player&gt;(e)) { ... }
+
+// 检查实体 e 是否拥有 ScaredMode 或 ChaseMode（至少一个）
+if (reg.any_of&lt;ScaredMode, ChaseMode&gt;(e)) { ... }</code></pre>
+
+<p>这在你需要做条件判断时很有用——比如「如果幽灵处于恐惧模式，就不能吃玩家」。</p>
+
+<h2>API 速查总表</h2>
+
+<table>
+  <tr><th>操作</th><th>API</th><th>说明</th></tr>
+  <tr><td>创建实体</td><td><code>auto e = reg.create()</code></td><td>返回一个空实体 ID</td></tr>
+  <tr><td>挂载/覆盖组件</td><td><code>reg.emplace&lt;T&gt;(e, args...)</code></td><td>如果已有同类型组件则覆盖</td></tr>
+  <tr><td>读取组件（引用）</td><td><code>reg.get&lt;T&gt;(e)</code></td><td>没有则未定义行为 ⚠️</td></tr>
+  <tr><td>安全读取（指针）</td><td><code>reg.try_get&lt;T&gt;(e)</code></td><td>没有则返回 nullptr</td></tr>
+  <tr><td>移除组件</td><td><code>reg.remove&lt;T&gt;(e)</code></td><td>只移除指定类型</td></tr>
+  <tr><td>销毁实体</td><td><code>reg.destroy(e)</code></td><td>移除实体及所有组件</td></tr>
+  <tr><td>检查存在（ALL）</td><td><code>reg.all_of&lt;T...&gt;(e)</code></td><td>全部拥有 → true</td></tr>
+  <tr><td>检查存在（ANY）</td><td><code>reg.any_of&lt;T...&gt;(e)</code></td><td>至少一个 → true</td></tr>
+</table>
+
+<h2>小测验</h2>
+
+<ol>
+  <li><code>reg.emplace&lt;Position&gt;(e, 5, 3)</code> 和 <code>reg.emplace&lt;Position&gt;(e, 10, 20)</code> 先后执行，实体的位置是什么？</li>
+  <li>为什么 <code>reg.get&lt;T&gt;(e)</code> 在不确定实体有组件时不能用？</li>
+  <li>一个幽灵从 ScatterMode 切换到 ChaseMode，需要调用哪两个 API？</li>
+</ol>
+
+<div class="callout note" style="margin-top: 2rem;">
+  <strong>推荐阅读：</strong>
+  <a href="https://github.com/skypjack/entt/wiki/Crash-Course:-entity-component-system">EnTT Wiki — Crash Course: ECS</a> — 官方快速入门，涵盖本节所有 API。
+</div>
+
+<div class="footer">
+  <p><strong>上一课：</strong><a href="0001-what-is-ecs.html">第1课：ECS 是什么？</a></p>
+  <p><strong>下一步：</strong><a href="0003-entt-view.html">第3课：EnTT View</a> — 学习 <code>view&lt;T...&gt;()</code> 如何批量查询实体。</p>
+  <p>有疑问？直接问我：你可以在终端里继续和我讨论任何不理解的地方。</p>
+  <p><a href="../reference/glossary.html">术语速查表 →</a></p>
+</div>
+
+<details style="margin-top: 2rem; opacity: 0.7;">
+  <summary style="cursor: pointer; font-weight: 600;">测验答案</summary>
+  <ol style="margin-top: 0.5rem;">
+    <li>位置是 <strong>{10, 20}</strong>。第二次 <code>emplace</code> <strong>覆盖</strong>了第一次的值。<code>emplace</code> 总是用新值替换旧值。</li>
+    <li>因为 <code>get</code> 没有做任何检查——它假设组件一定存在。如果不存在，在 Release 模式下可能访问到野内存，导致崩溃或静默的数据损坏。在 Debug 模式下 EnTT 通常会触发 assert。</li>
+    <li><code>reg.remove&lt;ScatterMode&gt;(e);</code> 然后 <code>reg.emplace&lt;ChaseMode&gt;(e);</code>。两步操作：先移除旧模式标签，再挂上新模式标签。</li>
+  </ol>
+</details>
+
+</body>
+</html>

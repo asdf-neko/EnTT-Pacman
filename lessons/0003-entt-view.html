@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第3课：EnTT View — 批量查询实体</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>第3课：EnTT View — 批量查询实体</h1>
+<p class="meta">EnTT-Pacman 课程 &middot; 第一部分：地基</p>
+
+<h2>View 是什么？</h2>
+
+<p>
+前两课学完了单个实体的 CRUD。但系统的真正威力在于<strong>批量操作</strong>——「把所有正在移动的东西往前挪一格」、「给所有追逐模式下的幽灵计算目标」。
+</p>
+
+<p>
+<strong>View（视图）就是 EnTT 的批量查询机制。</strong>它回答一个问题：
+</p>
+
+<div class="callout good">
+  <strong>「给我所有同时拥有组件 A、B、C... 的实体」</strong>
+</div>
+
+<p>基本用法：</p>
+
+<pre><code>auto view = reg.view&lt;Position, ActualDir&gt;();     // 创建查询
+for (const entt::entity e : view) {               // 遍历结果
+  view.get&lt;Position&gt;(e).p += toPos(view.get&lt;ActualDir&gt;(e).d);
+}</code></pre>
+
+<p>
+<strong>每行代码都在说什么？</strong>把它翻译成人话：
+</p>
+
+<table>
+  <tr><th>代码</th><th>人话</th></tr>
+  <tr><td><code>reg.view&lt;Position, ActualDir&gt;()</code></td><td>「筛选出所有同时有 Position <strong>和</strong> ActualDir 的实体」</td></tr>
+  <tr><td><code>for (auto e : view)</code></td><td>「逐个处理筛选出来的实体」</td></tr>
+  <tr><td><code>view.get&lt;Position&gt;(e)</code></td><td>「拿到这个实体的 Position 组件」</td></tr>
+</table>
+
+<h2>View 的核心规则</h2>
+
+<div class="callout note">
+  <strong>规则一：列出的组件越多，筛选越精确。</strong><br>
+  <code>view&lt;Position&gt;()</code> → 所有有位置的实体（玩家+幽灵+任何会动的东西）<br>
+  <code>view&lt;Position, Player&gt;()</code> → 只有玩家<br>
+  <code>view&lt;Position, Player, ChaseMode&gt;()</code> → （不合理的查询——玩家没有 ChaseMode，返回空）
+</div>
+
+<div class="callout note">
+  <strong>规则二：view 是惰性查询。</strong><br>
+  它不复制数据，只是建立了一个「遍历路径」。在迭代过程中，如果组件被修改/移除/添加了，view 能感知到。
+</div>
+
+<h2>项目中所有 View 查询一览</h2>
+
+<p>打开项目，数一数每个系统用了什么样的 view——你会发现 <strong>view 的组件组合直接定义了系统的职责范围</strong>：</p>
+
+<table>
+  <tr><th>系统</th><th>View 查询</th><th>翻译</th></tr>
+  <tr>
+    <td><code>movement()</code></td>
+    <td><code>view&lt;Position, ActualDir&gt;</code></td>
+    <td>「所有能移动的东西」</td>
+  </tr>
+  <tr>
+    <td><code>wallCollide()</code></td>
+    <td><code>view&lt;Position, ActualDir, DesiredDir&gt;</code></td>
+    <td>「所有能改变方向的东西」</td>
+  </tr>
+  <tr>
+    <td><code>playerInput()</code></td>
+    <td><code>view&lt;Player, DesiredDir&gt;</code></td>
+    <td>「只有玩家」</td>
+  </tr>
+  <tr>
+    <td><code>pursueTarget()</code></td>
+    <td><code>view&lt;Target, Position, ActualDir, DesiredDir&gt;</code></td>
+    <td>「所有有追踪目标的东西」（幽灵）</td>
+  </tr>
+  <tr>
+    <td><code>setBlinkyChaseTarget()</code></td>
+    <td><code>view&lt;Target, ChaseMode, BlinkyChaseTarget&gt;</code></td>
+    <td>「追逐模式下的 Blinky」</td>
+  </tr>
+  <tr>
+    <td><code>setClydeChaseTarget()</code></td>
+    <td><code>view&lt;Target, Position, ChaseMode, ClydeChaseTarget, HomePosition&gt;</code></td>
+    <td>「追逐模式下的 Clyde」（需要5个组件！）</td>
+  </tr>
+  <tr>
+    <td><code>setScatterTarget()</code></td>
+    <td><code>view&lt;Target, ScatterMode, HomePosition&gt;</code></td>
+    <td>「散射模式下的幽灵」</td>
+  </tr>
+  <tr>
+    <td><code>setScaredTarget()</code></td>
+    <td><code>view&lt;Target, Position, ScaredMode, ActualDir&gt;</code></td>
+    <td>「恐惧模式下的幽灵」</td>
+  </tr>
+  <tr>
+    <td><code>setEatenTarget()</code></td>
+    <td><code>view&lt;Target, EatenMode, HomePosition&gt;</code></td>
+    <td>「被吃掉、正在回家的幽灵」</td>
+  </tr>
+  <tr>
+    <td><code>ghostScared()</code></td>
+    <td><code>view&lt;Ghost&gt;()</code></td>
+    <td>「所有幽灵（单组件查询）」</td>
+  </tr>
+  <tr>
+    <td><code>ghostChase()</code></td>
+    <td><code>view&lt;Ghost, ScatterMode&gt;()</code></td>
+    <td>「散射模式下的幽灵→切换为追逐」</td>
+  </tr>
+</table>
+
+<div class="callout good">
+  <strong>一个重要的设计洞察：</strong>你可以直接从 view 的组件列表推断出系统的职责。当你写一个新系统时，第一件事就是问自己：「我要操作拥有哪些组件的实体？」——答案就是你的 view 签名。
+</div>
+
+<h2>为什么用 view.get() 而不是 reg.get()？</h2>
+
+<p>两种写法都能拿到组件引用，但有区别：</p>
+
+<pre><code>// 写法 A：view.get（推荐）
+auto view = reg.view&lt;Position, ActualDir&gt;();
+for (auto e : view) {
+  view.get&lt;Position&gt;(e);    // ✅ view 已经知道实体有这个组件，直接返回引用
+}
+
+// 写法 B：reg.get（可以但不推荐）
+for (auto e : view) {
+  reg.get&lt;Position&gt;(e);    // ⚠️ reg 需要重新查找组件存储，稍慢
+}</code></pre>
+
+<p>
+<strong>在 view 循环内，始终用 <code>view.get&lt;T&gt;(e)</code>。</strong> 在 view 循环外（比如你需要访问其他实体的组件时），用 <code>reg.get&lt;T&gt;(otherEntity)</code>。
+</p>
+
+<h2>进阶模式：同一系统中使用多个 View</h2>
+
+<p>有些系统需要比较两类不同的实体——比如碰撞检测：</p>
+
+<pre><code>// src/sys/player_ghost_collide.cpp（简化）
+GhostCollision playerGhostCollide(entt::registry &reg) {
+  const auto players = reg.view&lt;Player, Position, ActualDir&gt;();   // 玩家组
+  const auto ghosts  = reg.view&lt;Ghost, Position, ActualDir&gt;();    // 幽灵组
+
+  for (const entt::entity p : players) {       // 外循环：每个玩家
+    const Pos playerPos = players.get&lt;Position&gt;(p).p;
+    for (const entt::entity g : ghosts) {      // 内循环：每个幽灵
+      const Pos ghostPos = ghosts.get&lt;Position&gt;(g).p;
+      if (collide(playerPos, ghostPos, ...)) {
+        // 碰撞发生！
+      }
+    }
+  }
+}</code></pre>
+
+<p>
+这里用了<strong>两个独立的 view</strong>，分别迭代玩家和幽灵，然后做笛卡尔积比较。这是处理「A 类实体 vs B 类实体」交互的标准模式。
+</p>
+
+<h2>迭代中修改组件：安全吗？</h2>
+
+<p>在 view 循环中增删当前实体的组件是<strong>安全的</strong>（EnTT 内部处理了迭代器失效）：</p>
+
+<pre><code>// src/sys/change_ghost_mode.cpp
+for (const entt::entity e : reg.view&lt;Ghost, ScatterMode&gt;()) {
+  reg.remove&lt;ScatterMode&gt;(e);    // ✅ 安全：移除当前实体的组件
+  reg.emplace&lt;ChaseMode&gt;(e);     // ✅ 安全：添加新组件
+}</code></pre>
+
+<div class="callout warn">
+  <strong>但要注意：</strong>如果你在循环中创建或销毁<strong>其他</strong>实体，可能触发存储扩容导致迭代器失效。对当前实体本身操作是 OK 的。
+</div>
+
+<h2>为什么 View 这么快？</h2>
+
+<p>理解这一点不是必须的，但它能帮你建立正确的直觉：</p>
+
+<ol>
+  <li><strong>同类型组件连续存储</strong>——所有 <code>Position</code> 组件紧挨着放在内存里，CPU 缓存友好。</li>
+  <li><strong>View 从最小的集合开始迭代</strong>——比如 <code>view&lt;Ghost, ScaredMode&gt;()</code>，EnTT 会先找 Ghost 和 ScaredMode 中实体更少的那一组，从它开始遍历，减少检查次数。</li>
+  <li><strong>没有虚函数、没有指针跳转</strong>——所有操作都是直接内存访问。</li>
+</ol>
+
+<h2>小测验</h2>
+
+<ol>
+  <li><code>reg.view&lt;Target, ScatterMode, HomePosition&gt;()</code> 会返回哪些实体？</li>
+  <li>如果你想写一个「减速系统」让恐惧模式下的幽灵移动变慢，view 应该查询哪些组件？</li>
+  <li>在 view 循环内部，<code>view.get&lt;T&gt;(e)</code> 和 <code>reg.get&lt;T&gt;(e)</code> 有什么区别？</li>
+</ol>
+
+<div class="callout note" style="margin-top: 2rem;">
+  <strong>推荐阅读：</strong>
+  <a href="https://github.com/skypjack/entt/wiki/Crash-Course:-entity-component-system#views">EnTT Wiki — Views</a> — 官方对 View 的详细说明。
+</div>
+
+<div class="footer">
+  <p><strong>上一课：</strong><a href="0002-entt-core-api.html">第2课：EnTT 核心 API</a></p>
+  <p><strong>下一步：</strong><a href="0004-game-loop.html">第4课：游戏主循环</a> — 学习 Game 类如何编排系统调用顺序。</p>
+  <p>有疑问随时问我。</p>
+  <p><a href="../reference/glossary.html">术语速查表 →</a></p>
+</div>
+
+<details style="margin-top: 2rem; opacity: 0.7;">
+  <summary style="cursor: pointer; font-weight: 600;">测验答案</summary>
+  <ol style="margin-top: 0.5rem;">
+    <li><strong>处于 ScatterMode（散射模式）下的幽灵。</strong>因为同时拥有 Target、ScatterMode、HomePosition 的实体只能是幽灵——玩家没有这些组件。</li>
+    <li><code>view&lt;Ghost, ScaredMode, ActualDir&gt;()</code>（或至少 <code>view&lt;Ghost, ScaredMode&gt;()</code>）。你需要筛选出同时是幽灵且处于恐惧模式的实体，然后修改它们的移动逻辑。如果需要在系统中修改方向，还要加上 ActualDir。</li>
+    <li><code>view.get&lt;T&gt;(e)</code> 更快——因为 view 在创建时已经确定了组件存储的位置，不需要重新查找。<code>reg.get&lt;T&gt;(e)</code> 每次调用都需要在 registry 中查找。在 view 循环中始终用前者。</li>
+  </ol>
+</details>
+
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第1课：ECS 是什么？</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>第1课：ECS 是什么？</h1>
+<p class="meta">EnTT-Pacman 课程 &middot; 第一部分：地基</p>
+
+<h2>从一个问题开始</h2>
+
+<p>
+假设你要写一个游戏，里面有<strong>玩家（Player）</strong>和<strong>幽灵（Ghost）</strong>。
+用传统的面向对象（OOP）方式，你很可能会这样设计：
+</p>
+
+<pre><code>// 传统 OOP 继承树
+class GameObject {           // 所有东西的基类
+  int x, y;                  // 位置
+  virtual void update() = 0; // 每帧更新
+};
+
+class Movable : public GameObject {
+  int dx, dy;                // 移动方向
+  virtual void move() { ... }
+};
+
+class Renderable : public GameObject {
+  Sprite* sprite;            // 贴图
+  virtual void draw() { ... }
+};
+
+class Player : public Movable, public Renderable {
+  int score;                 // 分数
+  void update() override { move(); draw(); }
+};
+
+class Ghost : public Movable, public Renderable {
+  AI* brain;                 // AI 逻辑
+  void update() override { brain->think(); move(); draw(); }
+};</code></pre>
+
+<div class="callout warn">
+  <strong>问题来了：</strong>如果以后想加一个「不会动的装饰物」，或者想让幽灵<strong>暂时不渲染</strong>，或者让玩家<strong>拥有幽灵的 AI 能力</strong>——继承树就会越来越扭曲，最终变成「钻石问题」和「上帝基类」的地狱。
+</div>
+
+<p>
+这就是 ECS 要解决的核心问题：<strong>继承描述的是「是什么」，而游戏真正关心的是「有什么」</strong>。
+</p>
+
+<h2>ECS 的答案：把数据和逻辑拆开</h2>
+
+<p>
+ECS 把游戏对象拆成三个概念：
+</p>
+
+<table>
+  <tr>
+    <th>概念</th>
+    <th>是什么</th>
+    <th>EnTT-Pacman 中的例子</th>
+  </tr>
+  <tr>
+    <td><strong>Entity（实体）</strong></td>
+    <td>一个 ID 编号，没有数据也没有行为</td>
+    <td>玩家 entity = 42，幽灵 entity = 99</td>
+  </tr>
+  <tr>
+    <td><strong>Component（组件）</strong></td>
+    <td>纯数据，挂载到 Entity 上</td>
+    <td><code>Position{ x: 5, y: 3 }</code>、<code>Player{}</code>、<code>Ghost{}</code></td>
+  </tr>
+  <tr>
+    <td><strong>System（系统）</strong></td>
+    <td>纯逻辑，操作拥有特定组件的实体</td>
+    <td><code>movement()</code> 系统搬动所有有 Position 的实体</td>
+  </tr>
+</table>
+
+<p>
+<strong>关键洞察：</strong>Entity 只是一个数字。它的「身份」完全由它<strong>挂了哪些 Component</strong>来决定。
+</p>
+
+<h2>看看真实代码：EnTT-Pacman 的组件</h2>
+
+<p>
+打开项目的 <code>src/comp/</code> 目录，你会看到这些文件：
+</p>
+
+<pre><code>src/comp/
+├── player.hpp        // struct Player {}        ← 只有名字，没有数据！
+├── ghost.hpp         // struct Ghost {}         ← 也是空的！
+├── position.hpp      // struct Position { Pos p; }
+├── dir.hpp           // struct DesiredDir { Dir d; }
+│                     // struct ActualDir { Dir d; }
+├── target.hpp        // struct Target { Pos p; }
+├── ghost_mode.hpp    // struct ChaseMode {} / ScatterMode {} / ScaredMode { int timer; }
+├── chase_target.hpp  // struct BlinkyChaseTarget { entity player; }
+├── sprite.hpp        // struct PlayerSprite { SpriteID id; }
+└── ...</code></pre>
+
+<div class="callout note">
+  <strong>注意两类组件：</strong>
+  <ul>
+    <li><strong>Tag Component（标签组件）</strong>：<code>Player{}</code>、<code>Ghost{}</code>、<code>ChaseMode{}</code> —— 空结构体，只用来「标记」实体是什么状态。</li>
+    <li><strong>Data Component（数据组件）</strong>：<code>Position{}</code>、<code>Target{}</code>、<code>ScaredMode{ timer }</code> —— 持有实际数据。</li>
+  </ul>
+</div>
+
+<h2>玩家 vs 幽灵：挂在同一个实体上的组件完全不同</h2>
+
+<p>在 <code>src/core/factories.cpp</code> 中，创建玩家和幽灵的方式清楚地展示了 ECS 的思想：</p>
+
+<pre><code>// 创建玩家 —— 挂 5 个组件
+entt::entity makePlayer(entt::registry &reg) {
+  const entt::entity e = reg.create();               // 1. 创建一个空实体（只是一个整数）
+  reg.emplace&lt;Player&gt;(e);                            // 2. 贴上 "我是玩家" 标签
+  reg.emplace&lt;DesiredDir&gt;(e, playerSpawnDir);         // 3. 期望方向
+  reg.emplace&lt;ActualDir&gt;(e, playerSpawnDir);          // 4. 实际方向
+  reg.emplace&lt;Position&gt;(e, playerSpawnPos);           // 5. 出生位置
+  reg.emplace&lt;PlayerSprite&gt;(e, animera::SpriteID::pacman_beg_); // 6. 精灵图
+  return e;
+}
+
+// 创建幽灵 —— 挂不同的组件！
+entt::entity makeGhost(...) {
+  const entt::entity e = reg.create();
+  reg.emplace&lt;Position&gt;(e, home);      // ✓ 有位置（和玩家一样）
+  reg.emplace&lt;HomePosition&gt;(e, ...);   // ✨ 有「家」的位置（玩家没有）
+  reg.emplace&lt;LeaveHouse&gt;(e);          // ✨ 有「离开鬼屋」门票（玩家没有）
+  reg.emplace&lt;ScatterMode&gt;(e);         // ✨ 初始是散射模式（玩家没有）
+  reg.emplace&lt;Target&gt;(e);             // ✨ 有追踪目标（玩家没有）
+  reg.emplace&lt;Ghost&gt;(e);              // ✨ 贴上 "我是幽灵" 标签
+  return e;
+}</code></pre>
+
+<div class="callout good">
+  <strong>看到了吗？</strong>
+  玩家和幽灵共享 <code>Position</code> 和方向组件（因为它们都需要移动），但幽灵额外拥有 <code>Target</code>（追踪目标）、<code>HomePosition</code>（家）、<code>Ghost</code>（标签）等组件。
+  <br><br>
+  如果将来想让幽灵也能吃豆子？给幽灵加上 <code>Player</code> 标签就行。想让玩家能飞？加个 <code>Flying</code> 组件就行。<strong>不需要改继承树，只需要增减组件。</strong>
+</div>
+
+<h2>系统如何工作？</h2>
+
+<p>
+组件只是数据，真正干活的是 <strong>System（系统）</strong>。系统是一段纯函数，它说：「给我所有同时拥有 <code>Position</code> 和 <code>ActualDir</code> 的实体，我来移动它们」。
+</p>
+
+<pre><code>// src/sys/movement.cpp
+void movement(entt::registry &reg) {
+  // view = "给我所有同时有 Position 和 ActualDir 的实体"
+  auto view = reg.view&lt;Position, ActualDir&gt;();
+  for (const entt::entity e : view) {
+    Pos &pos = view.get&lt;Position&gt;(e).p;
+    const Dir dir = view.get&lt;ActualDir&gt;(e).d;
+    pos += toPos(dir);   // 把位置往方向偏移一格
+  }
+}</code></pre>
+
+<p>
+这个系统<strong>不关心实体是玩家还是幽灵</strong>。它只关心「你有没有 Position 和 ActualDir」。如果你有，你就被移动。这就是 ECS 的核心威力：<strong>逻辑和身份完全解耦</strong>。
+</p>
+
+<h2>ECS vs OOP 对比总结</h2>
+
+<table>
+  <tr>
+    <th></th>
+    <th>传统 OOP</th>
+    <th>ECS</th>
+  </tr>
+  <tr>
+    <td>数据存储</td>
+    <td>分散在继承链的各个类中</td>
+    <td>集中在 Component 中，按类型连续存储</td>
+  </tr>
+  <tr>
+    <td>行为定义</td>
+    <td>绑定在类的方法上</td>
+    <td>独立的 System 函数</td>
+  </tr>
+  <tr>
+    <td>添加新能力</td>
+    <td>需要修改继承树</td>
+    <td>添加新组件 + 新系统</td>
+  </tr>
+  <tr>
+    <td>运行时改身份</td>
+    <td>几乎不可能</td>
+    <td>增删组件即可</td>
+  </tr>
+  <tr>
+    <td>缓存友好性</td>
+    <td>差（对象分散在内存中）</td>
+    <td>好（同类型组件连续存储）</td>
+  </tr>
+</table>
+
+<h2>小测验</h2>
+
+<p>思考以下问题（答案在页面底部）：</p>
+
+<ol>
+  <li>在 EnTT-Pacman 中，<code>struct Player {}</code> 是空的。它为什么存在？</li>
+  <li>如果想让幽灵在恐惧模式下移动速度变慢，你应该修改哪个组件？</li>
+  <li><code>movement()</code> 系统需要知道它移动的是玩家还是幽灵吗？</li>
+</ol>
+
+<div class="callout note" style="margin-top: 2rem;">
+  <strong>推荐阅读：</strong>
+  <a href="https://github.com/SanderMertens/ecs-faq">Entity Component System FAQ</a> — 深入了解 ECS 的设计哲学。
+  <br>
+  <strong>推荐观看：</strong>
+  <a href="https://www.youtube.com/watch?v=W3aieHjyNvw">CppCon 2018: "Data-Oriented Design and C++"</a> — 理解为什么 ECS 更快。
+</div>
+
+<div class="footer">
+  <p><strong>下一步：</strong><a href="0002-entt-core-api.html">第2课：EnTT 核心 API</a> — 学习 <code>registry</code>、<code>create()</code>、<code>emplace()</code> 的具体用法。</p>
+  <p>有疑问？直接问我：「我不理解 ______，能再解释一下吗？」</p>
+  <p><a href="../RESOURCES.md">查看全部学习资源 →</a></p>
+</div>
+
+<!-- 测验答案 -->
+<details style="margin-top: 2rem; opacity: 0.7;">
+  <summary style="cursor: pointer; font-weight: 600;">测验答案</summary>
+  <ol style="margin-top: 0.5rem;">
+    <li><strong>Player{}</strong> 是标签组件（Tag Component）。它自己不存数据，但让系统能通过 <code>view&lt;Player&gt;()</code> 筛选出属于玩家的实体。比如 <code>playerInput()</code> 系统只处理有 <code>Player</code> 标签的实体。</li>
+    <li>修改 <strong>ScaredMode</strong> 组件，或新增一个 <strong>Speed</strong> 组件。在 ECS 中，你会添加数据到已有的组件（或创建新组件），然后让 movement 系统读取它。</li>
+    <li><strong>不需要。</strong> <code>movement()</code> 只查看 <code>Position</code> 和 <code>ActualDir</code> 组件。任何同时拥有这两个组件的实体都会被移动——无论是玩家、幽灵，还是将来添加的任何东西。</li>
+  </ol>
+</details>
+
+</body>
+</html>

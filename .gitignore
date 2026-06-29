@@ -1,1 +1,21 @@
+# Build outputs
+build/
+
+# vcpkg installed packages
+vcpkg_installed/
+
+# CMake user presets
+CMakeUserPresets.json
+
+# Generated compile commands
+compile_commands.json
+
+# IDE
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
 **/.DS_Store

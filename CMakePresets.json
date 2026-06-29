@@ -1,0 +1,45 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "w64devkit-debug",
+      "displayName": "w64devkit Debug",
+      "description": "Configure with w64devkit g++ and Ninja for a Debug build.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE":"C:\\codeTool\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake",
+        "CMAKE_C_COMPILER": "C:\\codeTool\\w64devkit\\bin\\gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:\\codeTool\\w64devkit\\bin\\g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:\\codeTool\\w64devkit\\bin\\ninja.exe",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "TRUE"
+      }
+    },
+    {
+      "name": "w64devkit-release",
+      "displayName": "w64devkit Release",
+      "description": "Configure with w64devkit g++ and Ninja for a Release build.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "C:\\codeTool\\w64devkit\\bin\\gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:\\codeTool\\w64devkit\\bin\\g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:\\codeTool\\w64devkit\\bin\\ninja.exe",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "TRUE"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "w64devkit-debug",
+      "configurePreset": "w64devkit-debug"
+    },
+    {
+      "name": "w64devkit-release",
+      "configurePreset": "w64devkit-release"
+    }
+  ]
+}
